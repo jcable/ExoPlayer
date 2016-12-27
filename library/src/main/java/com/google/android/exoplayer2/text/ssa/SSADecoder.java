@@ -161,7 +161,8 @@ public class SSADecoder extends SimpleSubtitleDecoder {
         seconds -= 60 * minutes;
         long hours = minutes / 60;
         minutes -= 60*hours;
-        return String.format("%02d:%02d:%02d.%d", hours, minutes, seconds, us);
+        double sec = seconds + ((float)us)/1000000.0;
+        return String.format("%01d:%02d:%06.3f", hours, minutes, sec);
     }
 
     private static long parseTimecode(String time) {
