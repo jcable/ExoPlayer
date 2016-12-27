@@ -30,6 +30,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import static android.R.attr.mimeType;
+
 /**
  * Representation of a media format.
  */
@@ -187,6 +189,8 @@ public final class Format implements Parcelable {
 
   private int hashCode;
   private MediaFormat frameworkMediaFormat;
+
+  private byte[] header = new byte[0];
 
   // Video.
 
