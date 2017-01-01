@@ -52,7 +52,7 @@ public class SSASubtitle implements Subtitle {
 
     @Override
     public List<Cue> getCues(long timeUs) {
-        Log.i("getCues", String.format("%d", timeUs));
+        Log.i("getCues", String.format("%d %s", timeUs, SSADecoder.formatTimeCode(timeUs)));
         int index = Util.binarySearchFloor(cueTimesUs, timeUs, true, false);
         if (index == -1 || cues.get(index) == null) {
             // timeUs is earlier than the start of the first cue, or we have an empty cue.

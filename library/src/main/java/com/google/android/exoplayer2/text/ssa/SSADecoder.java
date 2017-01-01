@@ -2,6 +2,7 @@ package com.google.android.exoplayer2.text.ssa;
 
 import android.content.Intent;
 import android.text.Layout;
+import android.util.ArrayMap;
 import android.util.Log;
 
 import com.google.android.exoplayer2.text.Cue;
@@ -17,8 +18,13 @@ import java.util.List;
 import java.util.Map;
 
 import static android.R.attr.data;
+import static android.R.attr.format;
+import static android.R.attr.key;
+import static android.R.attr.lines;
 import static android.R.attr.text;
 import static android.R.attr.textAlignment;
+import static android.icu.lang.UCharacter.GraphemeClusterBreak.L;
+import static android.webkit.ConsoleMessage.MessageLevel.LOG;
 import static com.google.android.exoplayer2.text.Cue.DIMEN_UNSET;
 import static com.google.android.exoplayer2.text.Cue.TYPE_UNSET;
 
@@ -28,11 +34,17 @@ import static com.google.android.exoplayer2.text.Cue.TYPE_UNSET;
 
 public class SSADecoder extends SimpleSubtitleDecoder {
     private static final String TAG = "SSADecoder";
-    private String format = "Start, ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
+    private static String defaultDialogueFormat = "Start, ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
+    private static String defaultStyleFormat = "Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding";
+    private String[] dialogueFormat;
+    private String[] styleFormat;
     private SSASubtitle subtitles = new SSASubtitle();
+    private Map<String,Style> styles = new HashMap<>();
 
     public SSADecoder() {
         super("SSADecoder");
+        dialogueFormat = parseKeys(defaultDialogueFormat);
+        styleFormat = parseKeys(defaultStyleFormat);
     }
 
     /**
@@ -57,56 +69,59 @@ public class SSADecoder extends SimpleSubtitleDecoder {
                 parseInfo(data);
                 continue;
             }
-            if (currentLine.equals("[V4+ Styles]")) {
-                parseStyles(data);
+            else if (currentLine.equals("[V4+ Styles]")) {
+                parseStyles(styles, data);
                 continue;
             }
-            if (currentLine.equals("[V4 Styles]")) {
-                parseStyles(data);
+            else if (currentLine.equals("[V4 Styles]")) {
+                parseStyles(styles, data);
                 continue;
             }
-            if (currentLine.equals("[Events]")) {
-                parseEvents(format, data, subtitles);
+            else if (currentLine.equals("[Events]")) {
+                while(true) {
+                    currentLine = data.readLine();
+                    if(currentLine==null)
+                        break;
+                    Log.i(TAG, currentLine);
+                    if(!currentLine.contains(":"))
+                        break;
+                    String p[] = currentLine.split(":",2);
+                    if(p[0].equals("Format")) {
+                        dialogueFormat = parseKeys(p[1]);
+                    }
+                    else if(p[0].equals("Dialogue")) {
+                        addEvent(p[1]);
+                    }
+                }
             }
-            if (currentLine.matches("^Dialogue:.*$")) {
-                addEvent(subtitles, format, currentLine.split(":",2)[1]);
+            else if (currentLine.matches("^Dialogue:.*$")) {
+                addEvent(currentLine.split(":",2)[1]);
             }
         }
 
         return subtitles;
     }
 
-    private static void parseInfo(ParsableByteArray data) {
-        Map<String,List<String>> info = parseLines(data);
-    }
-
-    private static void parseStyles(ParsableByteArray data) {
-        Map<String,List<String>> styles = parseLines(data);
-    }
-
-    //0,0,Watamote-internal/narrator,Serinuma,0000,0000,0000,,The prince should be with the princess.
-    //ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-    private static void parseEvents(String format, ParsableByteArray data, SSASubtitle subtitles) {
-        Map<String, List<String>> events = parseLines(data);
-        if (events.containsKey("Format")) {
-            format = events.get("Format").get(0);
+    private void addEvent(String event) {
+        Map<String,String> ev = parseLine(dialogueFormat, event.trim());
+        int readOrder = Integer.parseInt(ev.get("readorder"));
+        long start = parseTimecode(ev.get("start"));
+        int marginL = Integer.parseInt(ev.get("marginl"));
+        int marginR = Integer.parseInt(ev.get("marginr"));
+        int marginV = Integer.parseInt(ev.get("marginv"));
+        String styleName = ev.get("style");
+        Style style = styles.get(styleName);
+        if(style == null) {
+            Log.e(TAG, "null style");
         }
-        for(String event : events.get("Dialogue")) {
-            addEvent(subtitles, format, event);
+        else {
+            if(marginL==0) marginL = style.getMarginL();
+            if(marginR==0) marginR = style.getMarginR();
+            if(marginV==0) marginV = style.getMarginV();
         }
-    }
-
-    private static void addEvent(SSASubtitle subtitles, String format, String event) {
-        Map<String,String> ev = parseEvent(format, event.trim());
-        int readOrder = Integer.parseInt(ev.get("ReadOrder"));
-        long start = parseTimecode(ev.get("Start"));
-        int marginL = Integer.parseInt(ev.get("MarginL"));
-        int marginR = Integer.parseInt(ev.get("MarginR"));
-        int marginV = Integer.parseInt(ev.get("MarginV"));
-        int layer = Integer.parseInt(ev.get("Layer"));
-        String style = ev.get("Style");
-        String effect = ev.get("Effect");
-        String text = ev.get("Text");
+        int layer = Integer.parseInt(ev.get("layer"));
+        String effect = ev.get("effect");
+        String text = ev.get("text").replaceAll("\\\\N", "\n");
         String simpleText = text.replaceAll("\\{[^{]*\\}", "");
         Layout.Alignment textAlignment = null;
         float line = Cue.DIMEN_UNSET;
@@ -120,20 +135,10 @@ public class SSADecoder extends SimpleSubtitleDecoder {
         subtitles.add(readOrder, cue, start);
     }
 
-    private static Map<String,String> parseEvent(String format, String event) {
-        String keys[] = format.split(", *");
-        Map<String,String> result = new HashMap<>();
-        String fields[] = event.split(", *", keys.length);
-        for(int i=0; i<keys.length; i++) {
-            String k = keys[i].trim();
-            String v = fields[i];
-            result.put(k, v);
-        }
-        return result;
+    private static void parseInfo(ParsableByteArray data) {
     }
 
-    private static Map<String,List<String>> parseLines(ParsableByteArray data) {
-        Map<String,List<String>> result = new HashMap<String, List<String>>();
+    private void parseStyles(Map<String, Style> styles, ParsableByteArray data) {
         while(true) {
             String line = data.readLine();
             if(line==null)
@@ -142,14 +147,32 @@ public class SSADecoder extends SimpleSubtitleDecoder {
             if(!line.contains(":"))
                 break;
             String p[] = line.split(":",2);
-            if(result.containsKey(p[0])) {
-                result.get(p[0]).add(p[1]);
+            if(p[0].equals("Format")) {
+                styleFormat = parseKeys(p[1]);
             }
-            else {
-                List<String> l = new ArrayList<String>();
-                l.add(p[1]);
-                result.put(p[0], l);
+            else if(p[0].equals("Style")) {
+                Style s = new Style(parseLine(styleFormat, p[1]));
+                styles.put(s.getName(), s);
             }
+        }
+    }
+
+    private String[] parseKeys(String format) {
+        String keys[] = format.split(", *");
+        String r[] = new String[keys.length];
+        for(int i=0; i<r.length; i++) {
+            r[i] = keys[i].trim().toLowerCase();
+        }
+        return r;
+    }
+
+    private static Map<String,String> parseLine(String[] keys, String event) {
+        Map<String,String> result = new HashMap<>();
+        String fields[] = event.split(", *", keys.length);
+        for(int i=0; i<keys.length; i++) {
+            String k = keys[i];
+            String v = fields[i].trim();
+            result.put(k, v);
         }
         return result;
     }

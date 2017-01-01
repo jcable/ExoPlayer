@@ -348,8 +348,12 @@
         "uri": "http://192.168.1.133:8080/Watashi ga Motete Dousunda - 01.mkv"
       },
       {
-        "name": "Elephant Dreams (Matroska)",
+        "name": "Elephant Dreams (Matroska/srt)",
         "uri": "http://192.168.1.133:8080/matroska_test_w1_1/test5.mkv"
+      },
+      {
+        "name": "Elephant Dreams (Matroska/ssa)",
+        "uri": "http://192.168.1.133:8080/matroska_test_w1_1/test5ssa.mkv"
       },
       {
         "name": "Big Buck Bunny (MP4 Video)",
