@@ -57,6 +57,7 @@ import java.util.Locale;
 import java.util.UUID;
 
 import static android.R.attr.format;
+import static android.R.attr.longClickable;
 import static android.R.attr.mimeType;
 import static android.R.attr.track;
 import static android.R.id.input;
@@ -899,6 +900,9 @@ public final class MatroskaExtractor implements Extractor {
     if (CODEC_ID_SUBRIP.equals(track.codecId)) {
       writeSubripSample(track);
     }
+    if (CODEC_ID_ASS.equals(track.codecId)) {
+      writeSSASample(track);
+    }
     track.output.sampleMetadata(timeUs, blockFlags, sampleBytesWritten, 0, track.encryptionKeyId);
     sampleRead = true;
     resetSample();
@@ -951,7 +955,9 @@ public final class MatroskaExtractor implements Extractor {
       return;
     }
     if (CODEC_ID_ASS.equals(track.codecId)) {
-      writeSSASampleData(input, track, size);
+      // Defer writing the data to the track output. We need to modify the sample data by setting
+      // the correct end timecode, which we might not have yet.
+      cacheSSASampleData(input, track, size);
       return;
     }
 
@@ -1095,30 +1101,24 @@ public final class MatroskaExtractor implements Extractor {
     }
   }
 
+    private void cacheSSASampleData(ExtractorInput input, Track track, int size) throws IOException,
+            InterruptedException
+    {
+        ParsableByteArray ssaSample = new ParsableByteArray(size);
+        input.readFully(ssaSample.data, 0, size);
+        track.ssaSample = ssaSample.readString(size);
+    }
 
-  private void writeSSASampleData(ExtractorInput input, Track track, int size)
-          throws IOException, InterruptedException, UnsupportedEncodingException {
-    ParsableByteArray ssaSample = new ParsableByteArray(size);
-    input.readFully(ssaSample.data, 0, size);
+  private void writeSSASample(Track track) {
     StringBuffer s = new StringBuffer();
     if(track.ssaHeader != null) {
-      // header contains the original format but the Matroska encoder changes this.
-      String header = new String(track.ssaHeader, "UTF-8").split("\\[Events]")[0];
-      track.ssaHeader = null;
-      s.append(header);
-      s.append("[Events]\n");
-      s.append("Format: Start, ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n");
+        // header contains the original format but the Matroska encoder changes this.
+        SSADecoder.writeMangledHeader(s, track.ssaHeader);
     }
-    s.append("Dialogue: ");
-    s.append(SSADecoder.formatTimeCode(blockTimeUs));
-    s.append(",");
-    //s.append(tc.format(new java.util.Date((blockTimeUs+blockDurationUs)/1000)));
-    //s.append(",");
-    s.append(ssaSample.readString(size));
-    s.append("\n");
-    ssaSample = new ParsableByteArray(s.toString().getBytes());
-    track.output.sampleData(ssaSample, ssaSample.limit());
-    sampleBytesWritten += ssaSample.limit();
+    SSADecoder.buildDialogue(s, track.ssaSample, blockDurationUs);
+    ParsableByteArray out = new ParsableByteArray(s.toString().getBytes());
+    track.output.sampleData(out, out.limit());
+    sampleBytesWritten += out.limit();
   }
 
   private void writeSubripSample(Track track) {
@@ -1383,6 +1383,7 @@ public final class MatroskaExtractor implements Extractor {
     public boolean flagDefault = true;
     private String language = "eng";
     public byte[] ssaHeader = null;
+    public String ssaSample = null;
 
     // Set when the output is initialized. nalUnitLengthFieldLength is only set for H264/H265.
     public TrackOutput output;

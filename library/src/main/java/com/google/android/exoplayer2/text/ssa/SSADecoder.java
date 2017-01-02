@@ -5,9 +5,11 @@ import android.text.Layout;
 import android.util.ArrayMap;
 import android.util.Log;
 
+import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.text.SimpleSubtitleDecoder;
 import com.google.android.exoplayer2.util.LongArray;
+import com.google.android.exoplayer2.util.ParsableBitArray;
 import com.google.android.exoplayer2.util.ParsableByteArray;
 
 import java.io.UnsupportedEncodingException;
@@ -17,12 +19,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import static android.R.attr.breadCrumbShortTitle;
 import static android.R.attr.data;
 import static android.R.attr.format;
 import static android.R.attr.key;
 import static android.R.attr.lines;
+import static android.R.attr.subtitle;
 import static android.R.attr.text;
 import static android.R.attr.textAlignment;
+import static android.R.attr.track;
 import static android.icu.lang.UCharacter.GraphemeClusterBreak.L;
 import static android.webkit.ConsoleMessage.MessageLevel.LOG;
 import static com.google.android.exoplayer2.text.Cue.DIMEN_UNSET;
@@ -32,13 +37,54 @@ import static com.google.android.exoplayer2.text.Cue.TYPE_UNSET;
  * Created by cablej01 on 26/12/2016.
  */
 
+/* Notes from ojw28
+
+    Subtitles are really complicated because they can be packaged in different units of granularity
+    and with different ways of conveying timing information. Roughly speaking, an input buffer
+    received by a subtitle decoder consists of a timestamp (timeUs) and the subtitle data to be
+    decoded (data). There are four cases that can occur:
+
+    1. data contains all of the cues for the media and also their presentation timestamps.
+    timeUs is the time of the start of the media. The subtitle decoder receives a single input buffer.
+
+    2. data contains a single cue to be displayed at timeUs. There are no timestamps encoded in data.
+    The subtitle decoder receives many input buffers.
+
+    3. data contains cues covering a region of time (e.g. 5 seconds) along with their presentation
+    timestamps relative to the start of the region. timeUs is the time of the start of the region.
+    The subtitle decoder receives many input buffers.
+
+    4. As above, but the timestamps embedded in data are relative to the start of the media rather
+    than the start of the region. This case is tricky and best avoided.
+
+    For a side-loaded SSA file you'd have case (1).
+
+    For SSA embedded in MKV, it looks like they way it's embedded means you'd have case (2)
+    if you were to just pass the sample data through without changing it.
+    Note that timeUs is being set to blockTimeUs already.
+    Each region happens to be the duration of a single cue.
+
+    In the extractor, It's much easier to handle if you change the sample data so that you get case (3).
+    This basically means the embedded time should be 0 rather than blockTimeUs.
+
+    If you look at the SubRip case in the MKV extractor you'll see that it does exactly this.
+    The SubRip case also defers writing so that the end time can be set properly.
+
+    In the decoder you should create a new Subtitle instance for each decode call, rather than appending to an existing instance.
+
+    For the SSA embedded in MKV case you should end up with each call to decode producing a new Subtitle with a single cue at time 0.
+    The reason this works is that the event timing in a Subtitle is relative to timeUs of the buffer,
+    which is being set to blockTimeUs. When the decoder receives a new input buffer with a larger timeUs
+    than the previous one, the value passed to getCues will go down.
+ */
+
+
 public class SSADecoder extends SimpleSubtitleDecoder {
     private static final String TAG = "SSADecoder";
-    private static String defaultDialogueFormat = "Start, ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
+    private static String defaultDialogueFormat = "Start, End, , Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
     private static String defaultStyleFormat = "Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding";
     private String[] dialogueFormat;
     private String[] styleFormat;
-    private SSASubtitle subtitles = new SSASubtitle();
     private Map<String,Style> styles = new HashMap<>();
 
     public SSADecoder() {
@@ -56,7 +102,50 @@ public class SSADecoder extends SimpleSubtitleDecoder {
      */
     @Override
     protected SSASubtitle decode(byte[] bytes, int length) {
+        SSASubtitle subtitle = new SSASubtitle();
         ParsableByteArray data = new ParsableByteArray(bytes, length);
+        String currentLine;
+        while ((currentLine = data.readLine()) != null) {
+            if (currentLine.matches("^Dialogue:.*$")) {
+                String p[] = currentLine.split(":",2);
+                Map<String,String> ev = parseLine(dialogueFormat, p[1].trim());
+                subtitle.addEvent(ev, styles);
+            }
+        }
+        return subtitle;
+    }
+
+    public void decodeFile(byte[] bytes, int length) {
+        SSASubtitle subtitle = new SSASubtitle();
+        ParsableByteArray data = new ParsableByteArray(bytes, length);
+        decodeHeader(data);
+        String currentLine;
+        while ((currentLine = data.readLine()) != null) {
+            while(true) {
+                currentLine = data.readLine();
+                if(currentLine==null)
+                    break;
+                Log.i(TAG, currentLine);
+                if(!currentLine.contains(":"))
+                    break;
+                String p[] = currentLine.split(":",2);
+                if(p[0].equals("Format")) {
+                    dialogueFormat = parseKeys(p[1]);
+                }
+                else if(p[0].equals("Dialogue")) {
+                    Map<String,String> ev = parseLine(dialogueFormat, p[1].trim());
+                    subtitle.addEvent(ev, styles);
+                }
+            }
+        }
+    }
+
+    public void decodeHeader(byte[] bytes, int length) {
+        ParsableByteArray data = new ParsableByteArray(bytes, length);
+        decodeHeader(data);
+    }
+
+    private void decodeHeader(ParsableByteArray data) {
         String currentLine;
         while ((currentLine = data.readLine()) != null) {
             if (currentLine.length() == 0) {
@@ -66,76 +155,18 @@ public class SSADecoder extends SimpleSubtitleDecoder {
             Log.i(TAG, currentLine);
 
             if (currentLine.equals("[Script Info]")) {
-                parseInfo(data);
+                // TODO
                 continue;
-            }
-            else if (currentLine.equals("[V4+ Styles]")) {
+            } else if (currentLine.equals("[V4+ Styles]")) {
                 parseStyles(styles, data);
                 continue;
-            }
-            else if (currentLine.equals("[V4 Styles]")) {
+            } else if (currentLine.equals("[V4 Styles]")) {
                 parseStyles(styles, data);
                 continue;
-            }
-            else if (currentLine.equals("[Events]")) {
-                while(true) {
-                    currentLine = data.readLine();
-                    if(currentLine==null)
-                        break;
-                    Log.i(TAG, currentLine);
-                    if(!currentLine.contains(":"))
-                        break;
-                    String p[] = currentLine.split(":",2);
-                    if(p[0].equals("Format")) {
-                        dialogueFormat = parseKeys(p[1]);
-                    }
-                    else if(p[0].equals("Dialogue")) {
-                        addEvent(p[1]);
-                    }
-                }
-            }
-            else if (currentLine.matches("^Dialogue:.*$")) {
-                addEvent(currentLine.split(":",2)[1]);
+            } else if (currentLine.equals("[Events]")) {
+                break;
             }
         }
-
-        return subtitles;
-    }
-
-    private void addEvent(String event) {
-        Map<String,String> ev = parseLine(dialogueFormat, event.trim());
-        int readOrder = Integer.parseInt(ev.get("readorder"));
-        long start = parseTimecode(ev.get("start"));
-        int marginL = Integer.parseInt(ev.get("marginl"));
-        int marginR = Integer.parseInt(ev.get("marginr"));
-        int marginV = Integer.parseInt(ev.get("marginv"));
-        String styleName = ev.get("style");
-        Style style = styles.get(styleName);
-        if(style == null) {
-            Log.e(TAG, "null style");
-        }
-        else {
-            if(marginL==0) marginL = style.getMarginL();
-            if(marginR==0) marginR = style.getMarginR();
-            if(marginV==0) marginV = style.getMarginV();
-        }
-        int layer = Integer.parseInt(ev.get("layer"));
-        String effect = ev.get("effect");
-        String text = ev.get("text").replaceAll("\\\\N", "\n");
-        String simpleText = text.replaceAll("\\{[^{]*\\}", "");
-        Layout.Alignment textAlignment = null;
-        float line = Cue.DIMEN_UNSET;
-        int lineType = Cue.TYPE_UNSET;
-        int lineAnchor = Cue.TYPE_UNSET;
-        int position = Cue.TYPE_UNSET;
-        int positionAnchor = Cue.TYPE_UNSET;
-        int size = Cue.TYPE_UNSET;
-        Cue cue = new Cue(simpleText);
-        //Cue cue = new  Cue(simpleText, textAlignment, line, lineType, lineAnchor,  position, positionAnchor, size);
-        subtitles.add(readOrder, cue, start);
-    }
-
-    private static void parseInfo(ParsableByteArray data) {
     }
 
     private void parseStyles(Map<String, Style> styles, ParsableByteArray data) {
@@ -166,7 +197,7 @@ public class SSADecoder extends SimpleSubtitleDecoder {
         return r;
     }
 
-    private static Map<String,String> parseLine(String[] keys, String event) {
+    public static Map<String,String> parseLine(String[] keys, String event) {
         Map<String,String> result = new HashMap<>();
         String fields[] = event.split(", *", keys.length);
         for(int i=0; i<keys.length; i++) {
@@ -175,6 +206,35 @@ public class SSADecoder extends SimpleSubtitleDecoder {
             result.put(k, v);
         }
         return result;
+    }
+
+    public static void writeMangledHeader(StringBuffer s, byte[] data){
+        // header contains the original format but the Matroska encoder changes this.
+        // we won't need anything after the [Events] line
+        try {
+            String header = new String(data, "UTF-8").split("\\[Events]")[0];
+            s.append(header);
+        }
+        catch (UnsupportedEncodingException e) {
+            // we know this can't happen
+        }
+        s.append("[Events]\n");
+        s.append(defaultDialogueFormat);
+        s.append("\n");
+    }
+
+    public static void buildDialogue(StringBuffer s, String data, long durationUs) {
+        s.append("Dialogue: ");
+        s.append(SSADecoder.formatTimeCode(0)); // blockTimeUs
+        s.append(",");
+        long endUs = durationUs; // + blockTimeUs
+        if (endUs == C.TIME_UNSET) {
+            endUs = 2000000; // 2 second default duration
+        }
+        s.append(SSADecoder.formatTimeCode(endUs));
+        s.append(",");
+        s.append(data);
+        s.append("\n");
     }
 
     public static String formatTimeCode(long tc_us) {
@@ -188,7 +248,7 @@ public class SSADecoder extends SimpleSubtitleDecoder {
         return String.format("%01d:%02d:%06.3f", hours, minutes, sec);
     }
 
-    private static long parseTimecode(String time) {
+    public static long parseTimecode(String time) {
         String p[] = time.split(":");
         long hours = Long.parseLong(p[0]);
         long minutes = Long.parseLong(p[1]);
