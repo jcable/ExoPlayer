@@ -16,13 +16,15 @@ import java.util.List;
 import java.util.Map;
 
 import static android.R.attr.start;
+import static android.util.Log.d;
+import static android.webkit.ConsoleMessage.MessageLevel.LOG;
 
 /**
  * Created by cablej01 on 26/12/2016.
  */
 
 public class SSASubtitle implements Subtitle {
-
+    private static final String TAG = "SSASubtitle";
     private List<Cue> cues = new ArrayList<>();
     private List<Long> cueTimesUs = new ArrayList<>();
 
@@ -38,6 +40,7 @@ public class SSASubtitle implements Subtitle {
 
     @Override
     public int getNextEventTimeIndex(long timeUs) {
+        Log.i(TAG, String.format("time %d", timeUs));
         int index = Util.binarySearchCeil(cueTimesUs, timeUs, false, false);
         return index < cueTimesUs.size() ? index : C.INDEX_UNSET;
     }
