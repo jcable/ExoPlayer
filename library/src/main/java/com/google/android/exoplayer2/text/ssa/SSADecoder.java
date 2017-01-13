@@ -8,6 +8,7 @@ import android.util.Log;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.text.Cue;
 import com.google.android.exoplayer2.text.SimpleSubtitleDecoder;
+import com.google.android.exoplayer2.text.Subtitle;
 import com.google.android.exoplayer2.util.LongArray;
 import com.google.android.exoplayer2.util.ParsableBitArray;
 import com.google.android.exoplayer2.util.ParsableByteArray;
@@ -81,16 +82,18 @@ import static com.google.android.exoplayer2.text.Cue.TYPE_UNSET;
 
 public class SSADecoder extends SimpleSubtitleDecoder {
     private static final String TAG = "SSADecoder";
-    private static String defaultDialogueFormat = "Start, End, , Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text";
-    private static String defaultStyleFormat = "Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding";
-    private String[] dialogueFormat;
-    private String[] styleFormat;
+    private String[] dialogueFormat = null;
+    private String[] styleFormat = null;
     private Map<String,Style> styles = new HashMap<>();
 
     public SSADecoder() {
         super("SSADecoder");
-        dialogueFormat = parseKeys(defaultDialogueFormat);
-        styleFormat = parseKeys(defaultStyleFormat);
+    }
+
+    public SSADecoder(byte[] header, String dlgfmt) {
+        super("SSADecoder");
+        decodeHeader(header, header.length);
+        dialogueFormat = parseKeys(dlgfmt);
     }
 
     /**
@@ -115,29 +118,26 @@ public class SSADecoder extends SimpleSubtitleDecoder {
         return subtitle;
     }
 
-    public void decodeFile(byte[] bytes, int length) {
+    public Subtitle decodeFile(byte[] bytes, int length) {
         SSASubtitle subtitle = new SSASubtitle();
         ParsableByteArray data = new ParsableByteArray(bytes, length);
         decodeHeader(data);
         String currentLine;
         while ((currentLine = data.readLine()) != null) {
-            while(true) {
-                currentLine = data.readLine();
-                if(currentLine==null)
-                    break;
-                Log.i(TAG, currentLine);
-                if(!currentLine.contains(":"))
-                    break;
-                String p[] = currentLine.split(":",2);
-                if(p[0].equals("Format")) {
-                    dialogueFormat = parseKeys(p[1]);
-                }
-                else if(p[0].equals("Dialogue")) {
-                    Map<String,String> ev = parseLine(dialogueFormat, p[1].trim());
-                    subtitle.addEvent(ev, styles);
-                }
+            if (currentLine == null)
+                break;
+            Log.i(TAG, currentLine);
+            if (!currentLine.contains(":"))
+                break;
+            String p[] = currentLine.split(":", 2);
+            if (p[0].equals("Format")) {
+                dialogueFormat = parseKeys(p[1]);
+            } else if (p[0].equals("Dialogue")) {
+                Map<String, String> ev = parseLine(dialogueFormat, p[1].trim());
+                subtitle.addEvent(ev, styles);
             }
         }
+        return subtitle;
     }
 
     public void decodeHeader(byte[] bytes, int length) {
@@ -156,13 +156,10 @@ public class SSADecoder extends SimpleSubtitleDecoder {
 
             if (currentLine.equals("[Script Info]")) {
                 // TODO
-                continue;
             } else if (currentLine.equals("[V4+ Styles]")) {
                 parseStyles(styles, data);
-                continue;
             } else if (currentLine.equals("[V4 Styles]")) {
                 parseStyles(styles, data);
-                continue;
             } else if (currentLine.equals("[Events]")) {
                 break;
             }
@@ -206,35 +203,6 @@ public class SSADecoder extends SimpleSubtitleDecoder {
             result.put(k, v);
         }
         return result;
-    }
-
-    public static void writeMangledHeader(StringBuffer s, byte[] data){
-        // header contains the original format but the Matroska encoder changes this.
-        // we won't need anything after the [Events] line
-        try {
-            String header = new String(data, "UTF-8").split("\\[Events]")[0];
-            s.append(header);
-        }
-        catch (UnsupportedEncodingException e) {
-            // we know this can't happen
-        }
-        s.append("[Events]\n");
-        s.append(defaultDialogueFormat);
-        s.append("\n");
-    }
-
-    public static void buildDialogue(StringBuffer s, String data, long durationUs) {
-        s.append("Dialogue: ");
-        s.append(SSADecoder.formatTimeCode(0)); // blockTimeUs
-        s.append(",");
-        long endUs = durationUs; // + blockTimeUs
-        if (endUs == C.TIME_UNSET) {
-            endUs = 2000000; // 2 second default duration
-        }
-        s.append(SSADecoder.formatTimeCode(endUs));
-        s.append(",");
-        s.append(data);
-        s.append("\n");
     }
 
     public static String formatTimeCode(long tc_us) {

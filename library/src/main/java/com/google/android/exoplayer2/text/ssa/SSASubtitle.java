@@ -71,9 +71,18 @@ public class SSASubtitle implements Subtitle {
 
     protected void addEvent(Map<String,String> ev, Map<String,Style> styles) {
         // int readOrder = Integer.parseInt(ev.get("readorder")); ? not needed
-        int marginL = Integer.parseInt(ev.get("marginl"));
-        int marginR = Integer.parseInt(ev.get("marginr"));
-        int marginV = Integer.parseInt(ev.get("marginv"));
+        int marginL = 0;
+        String m = ev.get("marginl");
+        if(!m.equals(""))
+           marginL = Integer.parseInt(m);
+        int marginR = 0;
+        m = ev.get("marginr");
+        if(!m.equals(""))
+            marginR = Integer.parseInt(m);
+        int marginV = 0;
+        m = ev.get("marginv");
+        if(!m.equals(""))
+            marginV = Integer.parseInt(m);
         String styleName = ev.get("style");
         Style style = styles.get(styleName);
         if(marginL!=0 || marginR!=0 || marginV !=0) {
@@ -91,6 +100,7 @@ public class SSASubtitle implements Subtitle {
         int layer = Integer.parseInt(ev.get("layer"));
         String effect = ev.get("effect");
         String text = ev.get("text").replaceAll("\\\\N", "\n");
+        text = ev.get("text").replaceAll("\\\\n", "\n");
         String simpleText = text.replaceAll("\\{[^{]*\\}", "");
         Cue cue = new SSACue(text, style, layer, effect);
         long start = SSADecoder.parseTimecode(ev.get("start"));

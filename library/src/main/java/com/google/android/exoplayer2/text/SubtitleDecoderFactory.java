@@ -17,6 +17,7 @@ package com.google.android.exoplayer2.text;
 
 import com.google.android.exoplayer2.Format;
 import com.google.android.exoplayer2.text.cea.Cea608Decoder;
+import com.google.android.exoplayer2.text.ssa.SSADecoder;
 import com.google.android.exoplayer2.text.subrip.SubripDecoder;
 import com.google.android.exoplayer2.text.ttml.TtmlDecoder;
 import com.google.android.exoplayer2.text.tx3g.Tx3gDecoder;
@@ -74,6 +75,12 @@ public interface SubtitleDecoderFactory {
         Class<?> clazz = getDecoderClass(format.sampleMimeType);
         if (clazz == null) {
           throw new IllegalArgumentException("Attempted to create decoder for unsupported format");
+        }
+        if(clazz == SSADecoder.class) {
+          byte[] header = format.initializationData.get(1);
+          String dlgfmt = new String(format.initializationData.get(0), "UTF-8");
+          return clazz.asSubclass(SubtitleDecoder.class).getConstructor(byte[].class, String.class)
+              .newInstance(header, dlgfmt);
         }
         if (clazz == Cea608Decoder.class) {
           return clazz.asSubclass(SubtitleDecoder.class).getConstructor(String.class, Integer.TYPE)

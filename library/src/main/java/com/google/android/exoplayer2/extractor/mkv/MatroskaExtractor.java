@@ -1110,12 +1110,16 @@ public final class MatroskaExtractor implements Extractor {
     }
 
   private void writeSSASample(Track track) {
+    long startUs = 0; // blockTimeUs
     StringBuffer s = new StringBuffer();
-    if(track.ssaHeader != null) {
-        // header contains the original format but the Matroska encoder changes this.
-        SSADecoder.writeMangledHeader(s, track.ssaHeader);
-    }
-    SSADecoder.buildDialogue(s, track.ssaSample, blockDurationUs);
+    s.append("Dialogue: ");
+    s.append(SSADecoder.formatTimeCode(startUs));
+    s.append(",");
+    long endUs = startUs + blockDurationUs;
+    s.append(SSADecoder.formatTimeCode(endUs));
+    s.append(",");
+    s.append(track.ssaSample);
+    s.append("\n");
     ParsableByteArray out = new ParsableByteArray(s.toString().getBytes());
     track.output.sampleData(out, out.limit());
     sampleBytesWritten += out.limit();
@@ -1382,7 +1386,6 @@ public final class MatroskaExtractor implements Extractor {
     public boolean flagForced;
     public boolean flagDefault = true;
     private String language = "eng";
-    public byte[] ssaHeader = null;
     public String ssaSample = null;
 
     // Set when the output is initialized. nalUnitLengthFieldLength is only set for H264/H265.
@@ -1504,7 +1507,10 @@ public final class MatroskaExtractor implements Extractor {
           break;
         case CODEC_ID_ASS:
           mimeType = MimeTypes.TEXT_SSA;
-          ssaHeader = codecPrivate;
+          initializationData = new ArrayList<>(3);
+          // this dialogue format is specific to Matroska
+          initializationData.add("Start, End, ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text".getBytes());
+          initializationData.add(codecPrivate);
           break;
         case CODEC_ID_VOBSUB:
           mimeType = MimeTypes.APPLICATION_VOBSUB;
@@ -1548,8 +1554,7 @@ public final class MatroskaExtractor implements Extractor {
             Format.NO_VALUE, initializationData, language, drmInitData);
       } else if (MimeTypes.TEXT_SSA.equals(mimeType)) {
         format = Format.createTextSampleFormat(Integer.toString(trackId), mimeType, null,
-              Format.NO_VALUE, selectionFlags, language, drmInitData);
-        output.track(number).sampleData(new ParsableByteArray(codecPrivate), codecPrivate.length);
+            Format.NO_VALUE, initializationData, selectionFlags, language, Format.NO_VALUE, drmInitData, Format.NO_VALUE);
       } else {
         throw new ParserException("Unexpected MIME type.");
       }
