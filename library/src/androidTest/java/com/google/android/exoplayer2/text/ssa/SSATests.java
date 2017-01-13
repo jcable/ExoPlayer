@@ -3,6 +3,7 @@ package com.google.android.exoplayer2.text.ssa;
 import android.test.InstrumentationTestCase;
 
 import com.google.android.exoplayer2.testutil.TestUtil;
+import com.google.android.exoplayer2.text.Subtitle;
 
 import java.io.IOException;
 import java.text.SimpleDateFormat;
@@ -21,7 +22,7 @@ public class SSATests extends InstrumentationTestCase {
     public void testDecodeTypical() throws IOException {
         SSADecoder decoder = new SSADecoder();
         byte[] bytes = TestUtil.getByteArray(getInstrumentation(), TYPICAL_FILE);
-        SSASubtitle subtitle = decoder.decodeFile(bytes, bytes.length);
+        Subtitle subtitle = decoder.decodeFile(bytes, bytes.length);
         int n = subtitle.getEventTimeCount();
         assertEquals(924, n); // includes end events
         assertTypicalCue1(subtitle, 0);
@@ -37,28 +38,28 @@ public class SSATests extends InstrumentationTestCase {
     Dialogue: 0,0:01:48.87,0:01:54.38,Watamote-Ep_Title,,0000,0000,0000,,Can She Do It? A Real Life Oto
     */
 
-    private static void assertTypicalCue1(SSASubtitle subtitle, int eventIndex) {
+    private static void assertTypicalCue1(Subtitle subtitle, int eventIndex) {
         assertEquals("0:00:04.230", SSADecoder.formatTimeCode(subtitle.getEventTime(eventIndex)));
         assertEquals("The prince should be with the princess.",
                 subtitle.getCues(subtitle.getEventTime(eventIndex)).get(0).text.toString());
         assertEquals("0:00:06.900", SSADecoder.formatTimeCode(subtitle.getEventTime(eventIndex+1)));
     }
 
-    private static void assertTypicalCue2(SSASubtitle subtitle, int eventIndex) {
+    private static void assertTypicalCue2(Subtitle subtitle, int eventIndex) {
         assertEquals("0:00:09.610", SSADecoder.formatTimeCode(subtitle.getEventTime(eventIndex)));
         assertEquals("Who was the one who decided that?",
                 subtitle.getCues(subtitle.getEventTime(eventIndex)).get(0).text.toString());
         assertEquals("0:00:13.200", SSADecoder.formatTimeCode(subtitle.getEventTime(eventIndex+1)));
     }
 
-    private static void assertTypicalCue3(SSASubtitle subtitle, int eventIndex) {
+    private static void assertTypicalCue3(Subtitle subtitle, int eventIndex) {
         assertEquals("0:00:33.010", SSADecoder.formatTimeCode(subtitle.getEventTime(eventIndex)));
         assertEquals("Kiss Him, Not Me",
                 subtitle.getCues(subtitle.getEventTime(eventIndex)).get(0).text.toString());
         assertEquals("0:00:41.770", SSADecoder.formatTimeCode(subtitle.getEventTime(eventIndex+1)));
     }
 
-    private static void assertTypicalCue4(SSASubtitle subtitle, int eventIndex) {
+    private static void assertTypicalCue4(Subtitle subtitle, int eventIndex) {
         String s1 = SSADecoder.formatTimeCode(subtitle.getEventTime(eventIndex));
         String s2 = SSADecoder.formatTimeCode(subtitle.getEventTime(eventIndex+1));
         String s3 =
